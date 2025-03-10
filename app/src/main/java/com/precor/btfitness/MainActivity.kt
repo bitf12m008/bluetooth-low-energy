@@ -15,17 +15,14 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.app.ActivityCompat
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.LinkedList
 import java.util.UUID
-import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.widget.Button
@@ -58,11 +55,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bluetoothLeScanner: BluetoothLeScanner
     private var bluetoothGatt: BluetoothGatt? = null
     private val characteristicQueue = LinkedList<BluetoothGattCharacteristic>()
-    private lateinit var saveWorkout: Button
-    private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>> // Declare launcher here
+    private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>> 
 
     private lateinit var healthConnectManager: HealthConnectManager
     private lateinit var permissionLauncherHC: ActivityResultLauncher<Set<String>>
+
+    private lateinit var saveWorkout: Button
 
     private var timeElapsed: Long? = null
     private var avgHeartRate: Double? = null
@@ -108,35 +106,30 @@ class MainActivity : AppCompatActivity() {
 
             bluetoothLeScanner = bluetoothAdapter.bluetoothLeScanner
             if (bluetoothLeScanner == null) {
+                Toast.makeText(this@MainActivity, "BluetoothLeScanner is null. Check Bluetooth state.", Toast.LENGTH_SHORT).show()
                 Log.e(TAG, "BluetoothLeScanner is null. Check Bluetooth state.")
             }
 
-            requestPermissions()
+            requestBTPermissions()
         }
 
-        checkAndRequestPermissions()
+        requestHCPermissions()
     }
 
     private fun onPermissionsGranted() {
-        Log.e("HealthConnect", "Permission granted! Saving workout.")
+        Log.e(TAG, "HealthConnect Permissions granted!")
     }
 
     private fun onPermissionsDenied() {
-        Log.e("HealthConnect", "Permission denied! Cannot save workout.")
+        Log.e(TAG, "HealthConnect Permission denied! Cannot save workout.")
         Toast.makeText(this, "Permission denied! Cannot save workout.", Toast.LENGTH_LONG).show()
     }
 
-    private fun checkAndRequestPermissions() {
-        lifecycleScope.launch {
-            if (!healthConnectManager.hasAllPermissions()) {
-                permissionLauncherHC.launch(PERMISSIONS)
-            } else {
-                onPermissionsGranted()
-            }
-        }
+    private fun requestHCPermissions() {
+        permissionLauncherHC.launch(PERMISSIONS)
     }
 
-    private fun requestPermissions() {
+    private fun requestBTPermissions() {
         val permissions = arrayOf(
             Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.BLUETOOTH_CONNECT,
@@ -146,13 +139,7 @@ class MainActivity : AppCompatActivity() {
         permissionLauncher.launch(permissions)
     }
 
-    @SuppressLint("MissingPermission")
     private fun startBLEScan() {
-        if (!hasPermissions()) {
-            Log.e(TAG, "Missing permissions: SCAN=${ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)}, CONNECT=${ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)}, LOCATION=${ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)}")
-            return
-        }
-
         val scanFilter = ScanFilter.Builder()
             .setServiceUuid(SERVICE_UUID)
             .build()
@@ -164,19 +151,13 @@ class MainActivity : AppCompatActivity() {
         try {
             bluetoothLeScanner.startScan(listOf(scanFilter), scanSettings, scanCallback)
             Log.d(TAG, "Started BLE scanning with filter for UUID: $SERVICE_UUID")
-            Handler(Looper.getMainLooper()).postDelayed({ stopBLEScan() }, 20000) // Scan for 20 seconds
+            Handler(Looper.getMainLooper()).postDelayed({ stopBLEScan() }, 30000)
         } catch (e: SecurityException) {
             Log.e(TAG, "SecurityException: BLE scanning requires permissions.", e)
         }
     }
 
-    @SuppressLint("MissingPermission")
     private fun stopBLEScan() {
-        if (!hasPermissions()) {
-            Log.e(TAG, "Missing required permissions. Cannot stop BLE scan.")
-            return
-        }
-
         try {
             bluetoothLeScanner.stopScan(scanCallback)
             Log.d(TAG, "Stopped BLE scanning")
@@ -185,26 +166,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun hasPermissions(): Boolean {
-        val scanGranted = ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
-        val connectGranted = ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
-        val locationGranted = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        return scanGranted && connectGranted && locationGranted
-    }
-
     @SuppressLint("MissingPermission")
     private fun connectToTreadmill(device: BluetoothDevice) {
-        if (!hasPermissions()) {
-            Log.e(TAG, "Missing permissions for connection.")
-            return
-        }
-
         bluetoothGatt = device.connectGatt(this, false, object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
                 when (newState) {
                     BluetoothGatt.STATE_CONNECTED -> {
                         Log.d(TAG, "Connected to treadmill: ${device.address}")
-                        gatt?.discoverServices() // Discover services after connecting
+                        gatt?.discoverServices()
                     }
                     BluetoothGatt.STATE_DISCONNECTED -> {
                         Log.d(TAG, "Disconnected from treadmill: ${device.address}")
@@ -219,7 +188,6 @@ class MainActivity : AppCompatActivity() {
                     gatt?.getService(UUID.fromString("12345678-1234-5678-1234-56789abcdef0"))?.let { service ->
                         readWorkoutData(service)
                     } ?: Log.w(TAG, "Service not found")
-                    // Add logic to interact with services/characteristics here
                 } else {
                     Log.e(TAG, "Service discovery failed: $status")
                 }
@@ -253,11 +221,9 @@ class MainActivity : AppCompatActivity() {
                             Log.d(TAG, "Workout Title: $workoutTitle")
                         }
                     }
-                    // After successful read, proceed to the next characteristic
                     readNextCharacteristic()
                 } else {
                     Log.w(TAG, "Characteristic read failed with status: $status")
-                    // Even on failure, proceed to the next to avoid stalling
                     readNextCharacteristic()
                 }
             }
@@ -265,17 +231,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun readWorkoutData(service: BluetoothGattService) {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            Log.e(TAG, "Missing BLUETOOTH_CONNECT permission. Cannot read characteristics.")
-            return
-        }
-
         timeElapsed = null
         avgHeartRate = null
         totalDistance = null
         caloriesBurned = null
         workoutTitle = null
-        // Queue all characteristics to read sequentially
+
         characteristicQueue.clear()
         listOf(
             TIME_ELAPSED_CHAR_UUID,
@@ -290,7 +251,6 @@ class MainActivity : AppCompatActivity() {
             } ?: Log.w(TAG, "Characteristic $uuid not found in service")
         }
 
-        // Start reading the first characteristic
         readNextCharacteristic()
     }
 
@@ -303,13 +263,13 @@ class MainActivity : AppCompatActivity() {
                     val success = gatt.readCharacteristic(nextChar)
                     if (!success) {
                         Log.w(TAG, "Failed to initiate read for ${nextChar.uuid}")
-                        readNextCharacteristic() // Skip to next if failed
+                        readNextCharacteristic()
                     } else {
 
                     }
                 } catch (e: SecurityException) {
                     Log.e(TAG, "SecurityException: Unable to read ${nextChar.uuid}", e)
-                    readNextCharacteristic() // Skip to next on exception
+                    readNextCharacteristic()
                 }
             } else {
                 Log.d(TAG, "All characteristics read")
@@ -335,16 +295,10 @@ class MainActivity : AppCompatActivity() {
                 val serviceUuids: List<ParcelUuid>? = it.scanRecord?.serviceUuids
                 if (serviceUuids?.contains(SERVICE_UUID) == true) {
                     Log.d(TAG, "TREADMILL DETECTED! Address: $deviceAddress, Name: ${it.device.name ?: "Unknown"}")
-                    stopBLEScan() // Stop scanning once found
-                    connectToTreadmill(it.device) // Connect to the treadmill
+                    stopBLEScan()
+                    connectToTreadmill(it.device)
                 } else {
                     Log.d(TAG, "Not the treadmill. Service UUIDs: $serviceUuids")
-                }
-
-                if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                    Log.d(TAG, "Device name: ${it.device.name ?: "Unknown"}")
-                } else {
-                    Log.w(TAG, "Missing BLUETOOTH_CONNECT permission. Cannot access device name.")
                 }
             }
         }
@@ -429,10 +383,10 @@ class MainActivity : AppCompatActivity() {
                     listOf(distanceRecord, caloriesRecord, heartRateRecord, workoutRecord)
                 )
 
-                Log.d("HealthConnect", "$workoutTitle workout saved successfully!")
+                Log.d(TAG, "$workoutTitle workout saved successfully!")
                 Toast.makeText(this@MainActivity, "$workoutTitle workout saved successfully!", Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
-                Log.e("HealthConnect", "Failed to save manual workout", e)
+                Log.e(TAG, "Failed to save manual workout", e)
                 Toast.makeText(this@MainActivity, "Failed to save manual workout", Toast.LENGTH_LONG).show()
             }
         }
